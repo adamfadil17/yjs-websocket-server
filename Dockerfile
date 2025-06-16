@@ -1,34 +1,32 @@
-# Use the official Node.js runtime as the base image
+# Use Node.js 18 Alpine for smaller size
 FROM node:18-alpine
 
-# Set the working directory in the container
+# Set working directory
 WORKDIR /app
 
-# Copy package.json and package-lock.json (if available)
+# Copy package files
 COPY package*.json ./
 
 # Install dependencies
 RUN npm ci --only=production && npm cache clean --force
 
-# Copy the rest of the application code
+# Copy source code
 COPY . .
 
-# Create a non-root user to run the application
+# Create non-root user
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S nodejs -u 1001
 
-# Change ownership of the app directory to the nodejs user
+# Change ownership
 RUN chown -R nodejs:nodejs /app
-
-# Switch to the nodejs user
 USER nodejs
 
-# Expose the port the app runs on
+# Expose port
 EXPOSE 3001
 
-# Add health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:3001/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })"
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3001/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) }).on('error', () => process.exit(1))"
 
-# Define the command to run the application
+# Start server
 CMD ["npm", "start"]
