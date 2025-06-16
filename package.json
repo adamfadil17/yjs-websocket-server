@@ -1,16 +1,23 @@
 {
   "name": "websocket-server",
   "version": "1.0.0",
-  "main": "index.js",
+  "description": "Yjs WebSocket server for real-time collaboration",
+  "main": "server.js",
+  "type": "commonjs",
   "scripts": {
-    "dev": "nodemon server.js",
     "start": "node server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "nodemon server.js",
+    "build": "echo 'Build completed'",
+    "test": "node test-connection.js"
   },
-  "keywords": [],
+  "keywords": [
+    "yjs",
+    "websocket",
+    "collaboration",
+    "railway"
+  ],
   "author": "",
   "license": "ISC",
-  "description": "",
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",
@@ -20,5 +27,9 @@
   },
   "devDependencies": {
     "nodemon": "^3.1.10"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
   }
 }
