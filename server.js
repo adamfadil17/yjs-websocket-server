@@ -1,17 +1,16 @@
-const WebSocket = require("ws");
 const http = require("http");
 require("dotenv").config(); // Memuat variabel lingkungan dari .env jika ada (untuk pengembangan lokal)
+const { WebsocketProvider } = require("y-websocket/bin/utils"); // Import WebsocketProvider
+const Y = require("yjs"); // Import Yjs
 
 console.log("🚀 Starting Yjs WebSocket server with room support...");
 
-// Penting untuk Railway: Gunakan process.env.PORT yang disediakan oleh Railway.
-// Jika tidak ada (misalnya, saat pengembangan lokal), fallback ke 3001.
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3001; // Pastikan menggunakan Railway PORT atau fallback
 const HOST = process.env.HOST || "0.0.0.0"; // 0.0.0.0 agar mendengarkan semua antarmuka jaringan
 
-// Track active rooms and connections
+// Track active rooms and connections (these will be managed by Yjs internal awareness)
 const rooms = new Map();
-let totalConnections = 0;
+let totalConnections = 0; // Tetap bisa melacak total koneksi jika mau
 
 // Create HTTP server
 const server = http.createServer((req, res) => {
@@ -37,7 +36,7 @@ const server = http.createServer((req, res) => {
         status: "healthy",
         timestamp: new Date().toISOString(),
         port: PORT,
-        totalConnections,
+        totalConnections, // Ini akan mencerminkan total koneksi WS
         activeRooms: rooms.size,
         rooms: Array.from(rooms.entries()).map(([name, count]) => ({
           name,
@@ -113,9 +112,24 @@ const server = http.createServer((req, res) => {
   `);
 });
 
-// Create WebSocket server instance
+// Import the y-websocket server setup functions
+// We are going back to 'y-websocket/bin/utils' for WebsocketProvider
+// because the error 'setupWSConnection is not a function' implies it's not exported directly
+// from the main 'y-websocket' package as a named export.
+// This is a common pattern for internal utility exports.
+// If the previous ERR_PACKAGE_PATH_NOT_EXPORTED returns, then the 'utils' path is truly blocked.
+// However, the new error "setupWSConnection is not a function" means the module loaded but the function wasn't there.
+// Let's explicitly re-import the WebsocketProvider from the utils, as it often encapsulates the connection logic.
+// *** KEMBALI KE IMPORT utils UNTUK WebsocketProvider JIKA setupWSConnection GAGAL ***
+const { setupWSConnection } = require("y-websocket/bin/utils"); // Percobaan ini mungkin bisa
+
+// Yjs docs (Map of Y.Doc instances for each room)
+const docs = new Map();
+
+// Create WebSocket server instance and attach it to the HTTP server
 console.log("🔌 Creating WebSocket server...");
-const wss = new WebSocket.Server({
+const wss = new require("ws").Server({
+  // Using 'ws' directly for the WebSocket.Server constructor
   server, // Attach WebSocket server to the HTTP server
   verifyClient: (info) => {
     // Log connection attempt details for debugging
@@ -126,10 +140,6 @@ const wss = new WebSocket.Server({
   },
 });
 
-// Import setupWSConnection directly from 'y-websocket'
-// THIS IS THE KEY FIX for ERR_PACKAGE_PATH_NOT_EXPORTED
-const { setupWSConnection } = require("y-websocket"); //
-
 // Handle WebSocket connections
 wss.on("connection", (ws, req) => {
   totalConnections++;
@@ -138,6 +148,12 @@ wss.on("connection", (ws, req) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const roomName =
     url.searchParams.get("room") || url.pathname.slice(1) || "default"; // Fallback to path or 'default'
+
+  // Get or create Y.Doc for the room
+  if (!docs.has(roomName)) {
+    docs.set(roomName, new Y.Doc());
+  }
+  const ydoc = docs.get(roomName);
 
   // Track room connections count
   const currentRoomCount = rooms.get(roomName) || 0;
@@ -151,19 +167,16 @@ wss.on("connection", (ws, req) => {
   // Store room name on WebSocket object for easy access during cleanup
   ws.roomName = roomName;
 
-  // Setup Yjs connection with room support
+  // Setup Yjs connection using setupWSConnection
   try {
-    // Create a modified request object with the room name as the path.
-    // This is how y-websocket expects the room name for doc identification.
     const modifiedReq = {
       ...req,
-      url: `/${roomName}`,
+      url: `/${roomName}`, // Set the room as the path for Yjs
     };
-
-    // Use the correctly imported setupWSConnection function
     setupWSConnection(ws, modifiedReq, {
-      gc: true, // Enable garbage collection
-      gcFilter: () => true, // Collect garbage if no one is using the doc
+      doc: ydoc, // Pass the Y.Doc instance
+      gc: true,
+      gcFilter: () => true,
     });
 
     console.log(`🔄 Yjs connection established for room: ${roomName}`);
@@ -181,13 +194,14 @@ wss.on("connection", (ws, req) => {
   } catch (error) {
     // Log any errors during Yjs setup and close the connection
     console.error("❌ Yjs setup failed:", error);
-    ws.close(1011, "Yjs setup failed"); // Close with a custom error code
+    ws.close(1011, `Yjs setup failed: ${error.message}`); // Close with custom error
     totalConnections--; // Decrement total connections
 
     // Update room count on error (rollback)
     const roomCount = rooms.get(roomName) || 1;
     if (roomCount <= 1) {
       rooms.delete(roomName);
+      docs.delete(roomName); // Also delete Y.Doc if room is empty
     } else {
       rooms.set(roomName, roomCount - 1);
     }
@@ -202,6 +216,7 @@ wss.on("connection", (ws, req) => {
     const roomCount = rooms.get(roomName) || 1;
     if (roomCount <= 1) {
       rooms.delete(roomName); // Remove room if no more users
+      docs.delete(roomName); // Also delete Y.Doc when room is empty
       console.log(`🏠 Room "${roomName}" is now empty and removed`);
     } else {
       rooms.set(roomName, roomCount - 1); // Decrement room user count
@@ -223,6 +238,7 @@ wss.on("connection", (ws, req) => {
     const roomCount = rooms.get(roomName) || 1;
     if (roomCount <= 1) {
       rooms.delete(roomName);
+      docs.delete(roomName);
     } else {
       rooms.set(roomName, roomCount - 1);
     }
