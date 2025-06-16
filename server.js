@@ -1,11 +1,13 @@
 const WebSocket = require("ws");
 const http = require("http");
-require("dotenv").config();
+require("dotenv").config(); // Memuat variabel lingkungan dari .env jika ada (untuk pengembangan lokal)
 
 console.log("🚀 Starting Yjs WebSocket server with room support...");
 
-const PORT = process.env.PORT;
-const HOST = process.env.HOST || "0.0.0.0";
+// Penting untuk Railway: Gunakan process.env.PORT yang disediakan oleh Railway.
+// Jika tidak ada (misalnya, saat pengembangan lokal), fallback ke 3001.
+const PORT = process.env.PORT || 3001;
+const HOST = process.env.HOST || "0.0.0.0"; // 0.0.0.0 agar mendengarkan semua antarmuka jaringan
 
 // Track active rooms and connections
 const rooms = new Map();
@@ -15,7 +17,7 @@ let totalConnections = 0;
 const server = http.createServer((req, res) => {
   console.log(`📥 HTTP Request: ${req.method} ${req.url}`);
 
-  // Enable CORS
+  // Enable CORS for HTTP requests (important for preflight OPTIONS requests)
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -64,7 +66,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Default page
+  // Default page (landing page for HTTP requests)
   res.writeHead(200, { "Content-Type": "text/html" });
   res.end(`
     <!DOCTYPE html>
@@ -111,17 +113,22 @@ const server = http.createServer((req, res) => {
   `);
 });
 
-// Create WebSocket server
+// Create WebSocket server instance
 console.log("🔌 Creating WebSocket server...");
 const wss = new WebSocket.Server({
-  server,
+  server, // Attach WebSocket server to the HTTP server
   verifyClient: (info) => {
+    // Log connection attempt details for debugging
     console.log("🔍 WebSocket connection attempt");
     console.log("📡 Origin:", info.origin);
     console.log("🔗 URL:", info.req.url);
-    return true;
+    return true; // Allow all connections. You might want to add origin checks here for production.
   },
 });
+
+// Import setupWSConnection directly from 'y-websocket'
+// THIS IS THE KEY FIX for ERR_PACKAGE_PATH_NOT_EXPORTED
+const { setupWSConnection } = require("y-websocket"); //
 
 // Handle WebSocket connections
 wss.on("connection", (ws, req) => {
@@ -130,9 +137,9 @@ wss.on("connection", (ws, req) => {
   // Parse URL to get room name
   const url = new URL(req.url, `http://${req.headers.host}`);
   const roomName =
-    url.searchParams.get("room") || url.pathname.slice(1) || "default";
+    url.searchParams.get("room") || url.pathname.slice(1) || "default"; // Fallback to path or 'default'
 
-  // Track room connections
+  // Track room connections count
   const currentRoomCount = rooms.get(roomName) || 0;
   rooms.set(roomName, currentRoomCount + 1);
 
@@ -141,37 +148,27 @@ wss.on("connection", (ws, req) => {
   console.log(`🏠 Room: "${roomName}" (${rooms.get(roomName)} users)`);
   console.log(`📡 Full URL: ${req.url}`);
 
-  // Store room name on WebSocket for cleanup
+  // Store room name on WebSocket object for easy access during cleanup
   ws.roomName = roomName;
-
-  // Import and setup Yjs connection
-  let setupWSConnection;
-  try {
-    setupWSConnection = require("y-websocket/bin/utils").setupWSConnection;
-    console.log("📦 y-websocket utils loaded successfully");
-  } catch (error) {
-    console.error("❌ Failed to load y-websocket utils:", error);
-    ws.close(1011, "Server setup error");
-    totalConnections--;
-    return;
-  }
 
   // Setup Yjs connection with room support
   try {
-    // Create a modified request object with the room name
+    // Create a modified request object with the room name as the path.
+    // This is how y-websocket expects the room name for doc identification.
     const modifiedReq = {
       ...req,
-      url: `/${roomName}`, // Set the room as the path
+      url: `/${roomName}`,
     };
 
+    // Use the correctly imported setupWSConnection function
     setupWSConnection(ws, modifiedReq, {
-      gc: true,
-      gcFilter: () => true,
+      gc: true, // Enable garbage collection
+      gcFilter: () => true, // Collect garbage if no one is using the doc
     });
 
     console.log(`🔄 Yjs connection established for room: ${roomName}`);
 
-    // Send welcome message
+    // Send a welcome message to the newly connected client
     ws.send(
       JSON.stringify({
         type: "server-welcome",
@@ -182,31 +179,32 @@ wss.on("connection", (ws, req) => {
       })
     );
   } catch (error) {
+    // Log any errors during Yjs setup and close the connection
     console.error("❌ Yjs setup failed:", error);
-    ws.close(1011, "Yjs setup failed");
-    totalConnections--;
+    ws.close(1011, "Yjs setup failed"); // Close with a custom error code
+    totalConnections--; // Decrement total connections
 
-    // Update room count on error
+    // Update room count on error (rollback)
     const roomCount = rooms.get(roomName) || 1;
     if (roomCount <= 1) {
       rooms.delete(roomName);
     } else {
       rooms.set(roomName, roomCount - 1);
     }
-    return;
+    return; // Exit the connection handler
   }
 
-  // Handle connection close
+  // Handle connection close event
   ws.on("close", (code, reason) => {
-    totalConnections--;
+    totalConnections--; // Decrement total connections
 
     // Update room count
     const roomCount = rooms.get(roomName) || 1;
     if (roomCount <= 1) {
-      rooms.delete(roomName);
+      rooms.delete(roomName); // Remove room if no more users
       console.log(`🏠 Room "${roomName}" is now empty and removed`);
     } else {
-      rooms.set(roomName, roomCount - 1);
+      rooms.set(roomName, roomCount - 1); // Decrement room user count
     }
 
     console.log(`❌ Connection closed: ${code} - ${reason}`);
@@ -219,9 +217,9 @@ wss.on("connection", (ws, req) => {
   // Handle connection errors
   ws.on("error", (error) => {
     console.error("❌ WebSocket error:", error);
-    totalConnections--;
+    totalConnections--; // Decrement total connections on error
 
-    // Update room count on error
+    // Update room count on error (similar to close)
     const roomCount = rooms.get(roomName) || 1;
     if (roomCount <= 1) {
       rooms.delete(roomName);
@@ -230,50 +228,52 @@ wss.on("connection", (ws, req) => {
     }
   });
 
-  // Handle messages (for debugging)
+  // Handle messages received from clients (for debugging or custom logic)
   ws.on("message", (data) => {
     console.log(
       `📨 Message received in room "${roomName}" (${data.length} bytes)`
     );
+    // Yjs handles its own messages internally via setupWSConnection,
+    // so you typically don't process Yjs messages here directly.
   });
 });
 
-// Handle WebSocket server errors
+// Handle WebSocket server-wide errors
 wss.on("error", (error) => {
   console.error("❌ WebSocket Server error:", error);
 });
 
-// Start server
+// Start the HTTP server
 server.listen(PORT, HOST, () => {
   console.log(`🚀 Yjs WebSocket server started successfully!`);
   console.log(`📡 HTTP: http://${HOST}:${PORT}`);
-  console.log(`🔌 WebSocket: ws://${HOST}:${PORT}`);
+  console.log(`🔌 WebSocket: ws://${HOST}:${PORT}`); // Note: For public access, it will be wss:// (HTTPS/WSS)
   console.log(`🏥 Health: http://${HOST}:${PORT}/health`);
   console.log(`📊 Stats: http://${HOST}:${PORT}/stats`);
   console.log(`🔧 Environment: ${process.env.NODE_ENV || "development"}`);
   console.log(`✅ Ready for connections with room support!`);
 });
 
-// Handle server errors
+// Handle HTTP server errors
 server.on("error", (error) => {
   console.error("❌ Server error:", error);
-  process.exit(1);
+  process.exit(1); // Exit process on critical server error
 });
 
-// Graceful shutdown
+// Graceful shutdown procedure
 const shutdown = () => {
   console.log("\n🛑 Shutting down server...");
 
-  // Close all WebSocket connections
+  // Close all active WebSocket connections
   wss.clients.forEach((ws) => {
     try {
-      ws.close(1001, "Server shutting down");
+      ws.close(1001, "Server shutting down"); // 1001 is going away status code
     } catch (error) {
       console.error("Error closing WebSocket:", error);
     }
   });
 
-  // Close the server
+  // Close the HTTP server
   server.close((error) => {
     if (error) {
       console.error("Error closing server:", error);
@@ -284,25 +284,26 @@ const shutdown = () => {
     }
   });
 
-  // Force exit after 10 seconds
+  // Force exit after a timeout to prevent hanging
   setTimeout(() => {
     console.log("⚠️ Forcing server shutdown...");
     process.exit(1);
-  }, 10000);
+  }, 10000); // 10 seconds timeout
 };
 
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+// Listen for termination signals
+process.on("SIGINT", shutdown); // Ctrl+C
+process.on("SIGTERM", shutdown); // Sent by process managers (like Railway)
 
-// Handle uncaught exceptions
+// Handle unhandled exceptions and rejections to prevent process crashes
 process.on("uncaughtException", (error) => {
   console.error("❌ Uncaught Exception:", error);
-  process.exit(1);
+  process.exit(1); // Critical error, exit
 });
 
 process.on("unhandledRejection", (reason, promise) => {
   console.error("❌ Unhandled Rejection:", reason);
-  process.exit(1);
+  process.exit(1); // Critical error, exit
 });
 
 console.log("✅ Server initialization complete");
