@@ -4,7 +4,7 @@ require("dotenv").config();
 
 console.log("🚀 Starting Yjs WebSocket server with room support...");
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT;
 const HOST = process.env.HOST || "0.0.0.0";
 
 // Track active rooms and connections
