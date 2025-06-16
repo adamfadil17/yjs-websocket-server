@@ -7,8 +7,9 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
-    "build": "echo 'Build completed successfully'",
-    "test": "node test-connection.js"
+    "build": "npm install",
+    "test": "node test-connection.js",
+    "postinstall": "npm ls y-websocket"
   },
   "keywords": [
     "yjs",
@@ -22,7 +23,7 @@
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",
     "ws": "^8.18.2",
-    "y-websocket": "^3.0.0",
+    "y-websocket": "^1.5.0",
     "yjs": "^13.6.27"
   },
   "devDependencies": {

@@ -4,12 +4,31 @@ require("dotenv").config();
 
 console.log("🚀 Starting Yjs WebSocket server with room support...");
 
-const PORT = process.env.PORT;
+const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || "0.0.0.0";
 
 // Track active rooms and connections
 const rooms = new Map();
 let totalConnections = 0;
+
+// Import Yjs and related modules
+let Y, setupWSConnection;
+try {
+  Y = require("yjs");
+  // Try different import paths for y-websocket
+  try {
+    setupWSConnection = require("y-websocket/bin/utils").setupWSConnection;
+  } catch (e) {
+    console.log("⚠️ Trying alternative y-websocket import...");
+    setupWSConnection = require("y-websocket/bin/utils.js").setupWSConnection;
+  }
+  console.log("📦 Yjs and y-websocket loaded successfully");
+} catch (error) {
+  console.error("❌ Failed to load Yjs modules:", error);
+  console.log("💡 Make sure y-websocket and yjs are installed:");
+  console.log("   npm install yjs y-websocket");
+  process.exit(1);
+}
 
 // Create HTTP server
 const server = http.createServer((req, res) => {
@@ -143,18 +162,6 @@ wss.on("connection", (ws, req) => {
 
   // Store room name on WebSocket for cleanup
   ws.roomName = roomName;
-
-  // Import and setup Yjs connection
-  let setupWSConnection;
-  try {
-    setupWSConnection = require("y-websocket/bin/utils").setupWSConnection;
-    console.log("📦 y-websocket utils loaded successfully");
-  } catch (error) {
-    console.error("❌ Failed to load y-websocket utils:", error);
-    ws.close(1011, "Server setup error");
-    totalConnections--;
-    return;
-  }
 
   // Setup Yjs connection with room support
   try {
